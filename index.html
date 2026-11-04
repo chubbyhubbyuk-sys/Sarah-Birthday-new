@@ -110,7 +110,7 @@ const pages=[
 {label:"a little introduction",title:"The One and Only Sarah",doodle:"🌷",sticker:"🎀",photo:true,text:"There is only one you, and that is what makes you special. Your little habits, your way of talking, your laughter, and all the things that make you who you are deserve to be celebrated.",note:"no edits needed — just be you",caption:"one person, a thousand lovely details"},
 {label:"little everyday moments",title:"Small Things Matter",doodle:"☁️",sticker:"🐻",photo:true,text:"Sometimes the best memories are not grand plans. They are random conversations, silly jokes, unexpected smiles, and ordinary moments that somehow become favourites.",note:"the little things become the big memories",caption:"ordinary days, special memories"},
 {label:"details worth keeping",title:"Things That Make You You",doodle:"✿",sticker:"🌸",photo:true,text:"Your expressions, your humour, your kindness, and the tiny details you might not even notice — they all make you wonderfully you. Never feel you need to be anyone else.",note:"your own kind of lovely ♡",caption:"a page for all the little details"},
-{label:"memory corner",title:"A Moment to Remember",doodle:"📸",sticker:"🦋",photo:true,text:"Every photograph holds a little piece of time. Add a favourite picture here and let it remind you of a moment worth keeping close.",note:"tap a photo frame to add a picture",caption:"a memory tucked safely in a page"},
+{label:"memory corner",title:"A Moment to Remember",doodle:"📸",sticker:"🦋",photo:true,text:"Every photograph of you is the reason I am keep going on and here this picture of us, In Sha Allah we will recreate this picture together in real in our dream college and then we will remember our old days.",note:"tap a photo frame to add a picture",caption:"a memory tucked safely in a page"},
 {label:"a little appreciation",title:"Thank You, Sarah",doodle:"💌",sticker:"💗",photo:true,text:"Thank you for being yourself, for the smiles you bring, and for all the small moments that can brighten an ordinary day. You deserve kindness, happiness, and people who appreciate you.",note:"this page is a little thank-you",caption:"you are appreciated more than you know"},
 {label:"a wish for you",title:"For All Your Tomorrows",doodle:"☀️",sticker:"🌼",photo:false,text:"May your days be gentle, your dreams keep growing, and your hard work take you somewhere beautiful. May you always find reasons to be proud of yourself and people who cheer you on.",note:"wishing you a thousand happy tomorrows",caption:"a little wish, from the heart"},
 {label:"more memories ahead",title:"The Story Isn't Finished",doodle:"✨",sticker:"🧸",photo:true,text:"There are still new memories to make, new stories to tell, more laughter to share, and so many ordinary days waiting to become special. This little book is only a beginning.",note:"the next pages are still unwritten",caption:"more moments waiting for their turn"},
@@ -204,10 +204,14 @@ const musicCard = $("musicCard");
 const audio = $("songAudio");
 const songTitle = $("songTitle");
 const songFile = $("songFile");
-let songUrl = null;
+const DEFAULT_SONG = "./birthday-song.mp3";
+const DEFAULT_TITLE = "♫ Your little soundtrack";
+const AUDIO_TYPES = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac", wav: "audio/wav", ogg: "audio/ogg", flac: "audio/flac" };
+let songUrl = null; // object URL of the song the user chose (null while the default song is loaded)
+let songRev = 0;    // bumped whenever the user changes/removes the song, so slower background work knows it is out of date
 
 // The top button only opens the player.
-// Playback is controlled by the audio player's own Play/Pause button.
+// Playback is controlled only by the audio player's own Play/Pause button.
 musicBtn.addEventListener("click", () => {
   musicCard.classList.add("show");
 });
@@ -216,12 +220,34 @@ $("musicClose").addEventListener("click", () => {
   musicCard.classList.remove("show");
 });
 
+// Point the player at a song. Assigning audio.src already makes the browser load it,
+// so audio.load() is deliberately NOT called as well: a second load() restarts the
+// loading and stops whatever is playing.
+function loadSource(src, title) {
+  audio.src = src;
+  songTitle.textContent = title;
+}
+
 function setSong(blob, name) {
-  if (songUrl) URL.revokeObjectURL(songUrl);
-  songUrl = URL.createObjectURL(blob);
-  audio.src = songUrl;
-  songTitle.textContent = (name || "Our song").replace(/\.[^.]+$/, "");
-  audio.load();
+  const next = URL.createObjectURL(blob);
+  loadSource(next, (name || "Our song").replace(/\.[^.]+$/, ""));
+  if (songUrl) URL.revokeObjectURL(songUrl); // free the old one only after the player has moved on
+  songUrl = next;
+}
+
+function useDefaultSong() {
+  loadSource(DEFAULT_SONG, DEFAULT_TITLE);
+  if (songUrl) {
+    URL.revokeObjectURL(songUrl);
+    songUrl = null;
+  }
+}
+
+// Some phones give picked files an empty or odd MIME type, which can make the audio element refuse them.
+function asAudioBlob(blob, name) {
+  if (blob.type && blob.type.startsWith("audio/")) return blob;
+  const type = AUDIO_TYPES[(name || "").split(".").pop().toLowerCase()];
+  return type ? new Blob([blob], { type }) : blob;
 }
 
 $("changeSong").addEventListener("click", () => songFile.click());
@@ -237,28 +263,28 @@ songFile.addEventListener("change", async (e) => {
     return;
   }
 
+  songRev++; // this choice now wins over any saved-song restore that is still pending
+  const blob = asAudioBlob(file, file.name);
+
+  // Load the song first, so it plays even if saving it for next time fails.
+  setSong(blob, file.name);
+  say("Your song is ready ♡ Tap Play to listen.");
+
   try {
     await idb("song", "readwrite", store =>
-      store.put({ blob: file, name: file.name }, "chosen")
+      store.put({ blob, name: file.name }, "chosen")
     );
-    setSong(file, file.name);
-    say("Your song is ready ♡ Tap Play to listen.");
   } catch (err) {
     console.error(err);
-    say("Could not save your song ♡");
+    say("Your song is ready ♡ Tap Play to listen. (It could not be saved for next time.)");
   }
   songFile.value = "";
 });
 
 $("clearSong").addEventListener("click", async () => {
-  audio.pause();
-  if (songUrl) {
-    URL.revokeObjectURL(songUrl);
-    songUrl = null;
-  }
-  songTitle.textContent = "♫ Your little soundtrack";
-  audio.src = "./birthday-song.mp3";
-  audio.load();
+  songRev++;
+  audio.pause(); // intentional: the person pressed Remove
+  useDefaultSong();
 
   try {
     await idb("song", "readwrite", store => store.delete("chosen"));
@@ -269,28 +295,51 @@ $("clearSong").addEventListener("click", async () => {
   }
 });
 
-audio.addEventListener("play", () => say("Your song is playing ♡"));
+// A short technical summary, shown only when something goes wrong, so a stopped song can be explained.
+function why() {
+  const e = audio.error;
+  return "error: " + (e ? e.code + (e.message ? " " + e.message : "") : "none") +
+    ", ready " + audio.readyState + ", network " + audio.networkState + ", page " + document.visibilityState;
+}
+let lastPlayAt = 0;
+audio.addEventListener("play", () => {
+  lastPlayAt = performance.now();
+  say("Your song is playing ♡");
+});
 audio.addEventListener("pause", () => {
-  if (!audio.ended && audio.currentSrc) say("Song paused ♡");
+  if (audio.ended || !audio.currentSrc) return;
+  say(performance.now() - lastPlayAt < 800
+    ? "The song stopped right after starting (" + why() + ") ♡"
+    : "Song paused ♡");
 });
 audio.addEventListener("error", () => {
-  say("Could not load the song. Check birthday-song.mp3 or choose another ♡");
+  say("Could not load the song (" + why() + "). Check birthday-song.mp3 or choose another ♡");
 });
 
+// Start with the default song straight away, so Play never has to wait for IndexedDB.
+useDefaultSong();
+
+// Then bring back the saved song, without ever interrupting the person.
 (async () => {
+  const rev = songRev;
   try {
     const saved = await idb("song", "readonly", store => store.get("chosen"));
-    if (saved?.blob) {
-      setSong(saved.blob, saved.name);
+    if (!saved?.blob) return;
+
+    let blob = saved.blob;
+    try { blob = new Blob([await blob.arrayBuffer()], { type: blob.type }); } catch (_) {} // keep an in-memory copy
+    blob = asAudioBlob(blob, saved.name);
+
+    const apply = () => {
+      if (rev !== songRev) return; // the person already chose or removed a song meanwhile
+      setSong(blob, saved.name);
       say("Your saved song is still here ♡");
-    } else {
-      audio.src = "./birthday-song.mp3";
-      audio.load();
-    }
+    };
+    // If the default song is already playing, wait until it is paused before swapping.
+    if (audio.paused) apply();
+    else audio.addEventListener("pause", apply, { once: true });
   } catch (err) {
-    console.error(err);
-    audio.src = "./birthday-song.mp3";
-    audio.load();
+    console.error(err); // the default song is already loaded, so nothing else to do
   }
 })();
 $("confetti").addEventListener("click",()=>{const syms=["♡","✧","🌸","🎀","💗","⭐","🦋","🌷"],frag=document.createDocumentFragment();for(let i=0;i<22;i++){const el=document.createElement("span");el.textContent=syms[Math.random()*syms.length|0];el.style.cssText=`position:fixed;z-index:30;left:${rand(5,95)}vw;top:${rand(35,80)}vh;font-size:${rand(17,36)}px;pointer-events:none;will-change:transform,opacity`;frag.appendChild(el);el.animate([{transform:"translate(0,0) rotate(0)",opacity:1},{transform:`translate(${rand(-80,80)}px,${rand(-300,-140)}px) rotate(${rand(-180,180)}deg)`,opacity:0}],{duration:1600,easing:"ease-out",fill:"forwards"}).onfinish=()=>el.remove()}document.body.appendChild(frag);say("A little shower of magic, just for you ✨")});
